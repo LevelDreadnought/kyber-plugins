@@ -3,6 +3,21 @@
 A robust, configurable chat moderation plugin for **Kyber dedicated servers**.
 Designed to catch common word-filter bypasses, track player strikes, and automatically enforce mutes, kicks, and bans — all while remaining fully controllable at runtime by admins.
 
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Plugin Structure](#plugin-file-structure)
+- [Admin Configuration](#admin-configuration)
+- [In-Game Moderation Commands](#in-game-moderation-commands-via-game-chat)
+- [Admin Commands](#admin-commands-configuration-changes)
+- [Configuration & Defaults](#configuration-options-in-lua)
+- [Environment Variables](#environment-variable-list-for-docker)
+- [Chat Moderation Flow](#chat-moderation-flow-diagram)
+- [Bans, Performance & Safety](#bans-and-kicks)
+- [Planned Future Features](#planned-future-features)
+
+
 ## Features
 
 ### Core Filtering
@@ -256,7 +271,25 @@ Examples:
 
 ## Configuration Options in lua
 
-### Default Settings (Editable in Lua `__init__.lua`)
+The following table shows the default moderation behavior when no environment
+variables or admin commands override these values.
+
+| Setting             | Default | Description                                   |
+| ------------------- | ------- | --------------------------------------------- |
+| `BlockMessage`      | `true`  | Blocks chat messages that trigger the filter  |
+| `EnableLogging`     | `true`  | Logs moderation events to the server console  |
+| `EnableHostAlert`   | `false` | Sends alerts to the Kyber host event log      |
+| `EnableStrikeTrack` | `true`  | Enables per-player strike tracking            |
+| `EnableAutoMute`    | `true`  | Automatically mutes players at strike limit   |
+| `EnableAutoKick`    | `true`  | Automatically kicks players at kick threshold |
+| `EnableAutoBan`     | `false` | Automatically bans players at ban threshold   |
+| `MaxStrikes`        | `3`     | Strikes required before auto-mute             |
+| `MuteDuration`      | `300`   | Mute duration in seconds (`0` = permanent)    |
+| `KickAtStrikes`     | `5`     | Strikes required before auto-kick             |
+| `BanAtStrikes`      | `7`     | Strikes required before auto-ban              |
+
+
+### Default Settings Appearance in `__init__.lua`
 
 ```lua
 ChatFilter.BlockMessage      = true
@@ -334,6 +367,7 @@ Threshold Check (if enabled)
 
 * Banned players are kicked **on join**
 * Bans are stored in memory (non-persistent across server restarts)
+  * Functions by auto-kicking players on the ban list at server join
 * Admins are immune to auto-ban logic
 * `/unban` command requires playerId instead of PlayerName due to how the Kyber api works with offline player lookup
 
@@ -370,7 +404,7 @@ This prints detailed matching and decision logs to the server console.
 ## ⚠ Notes & Limitations
 
 * Bans are **not persistent across restarts** unless extended
-* Host alerting is stubbed (ready for Discord or event viewer integration)
+* Host alerting is stubbed (ready for Discord or Kyber event log integration)
 * Player lookup by name is case-insensitive but requires the player to be online
 
 ## Planned Future Features
