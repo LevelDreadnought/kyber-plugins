@@ -14,7 +14,7 @@ Designed to catch common word-filter bypasses, track player strikes, and automat
   * Spaced / punctuated letter detection (`b a n`, `b-a-n`, `b_a_n`)
 * Case-insensitive and punctuation-tolerant
 * Blocks or allows messages based on configuration
-* Chat messages filtered via Regex
+* Chat messages filtered using **Lua pattern matching** (regex-like)
 
 ### Moderation & Enforcement
 
@@ -40,10 +40,23 @@ Designed to catch common word-filter bypasses, track player strikes, and automat
 * Optional host alerting via the Kyber client event log (work in progress)
 * Debug logging enabled via environment variables
 
+>### ⚠ Warning:
+>
+>The included word list file `filtered_word_list.lua` contains some **very offensive language and slurs** (necessary in order to match/filter them).  
+>Please use caution when reviewing or editing the word list.
+
+
+
 ## Installation
 
 1. Place the `ChatFilter.kbplugin` file in your Kyber plugins directory.
 2. Restart the server or reload plugins.
+
+Optional:
+
+- Set environment variables for Docker deployments
+- Modify default variables in `__init__.lua`
+- Adjust thresholds in-game via admin commands
 
 ## Plugin File Structure
 ```
@@ -111,7 +124,7 @@ Admins **can**:
 * Use all chat commands listed below
 * Change moderation settings at runtime
 * Mute / unmute players by name
-* Unban players by name
+* Unban players by ID
 * View the full admin list
 * Bypass all automated punishments
 
@@ -125,7 +138,13 @@ Admins **cannot**:
 
 ## In-Game Moderation Commands (Via Game Chat)
 
-**Mute a Player**
+All moderation and admin commands:
+
+* Must be issued by an admin
+* Start with `/`
+* Are **not shown in chat**
+
+**Mute a Player Manually**
 
 `/mute <playerName> [seconds]`
 
@@ -150,10 +169,10 @@ Removes any active mute from the player.
 
 **Unban a Player**
 
-`/unban <playerName>`
+`/unban <playerId>`
 
 * Removes the player from the in-memory ban list
-* Player must be online to be resolved by name
+* Resets player's strike count
 
 **List All Admins**
 
@@ -166,25 +185,25 @@ Output behavior:
 
 ## Admin Commands (Configuration Changes)
 
-These commands modify chat filter behavior **at runtime**.
+These commands modify chat filter behavior while **in game**.
 
 ### Enable / Disable Features
 
 ```text
-/enableblockmessage
-/disableblockmessage
+/enableblockmessage         (enables chat message blocking)
+/disableblockmessage        (disables chat message blocking)
 
-/enablelogging
-/disablelogging
+/enablelogging              (enables event logging)
+/disablelogging             (disables event logging)
 
-/enablehostalert
-/disablehostalert
+/enablehostalert            (enables event log alerts)
+/disablehostalert           (disables event log alerts)
 
-/enablestriketrack
-/disablestriketrack
+/enablestriketrack          (enables strike tracking)
+/disablestriketrack         (disables strike tracking)
 
-/enableautomute
-/disableautomute
+/enableautomute             (enables auto muting players)
+/disableautomute            (disables auto muting players)
 ```
 
 Changes apply immediately and remain active until:
@@ -192,16 +211,15 @@ Changes apply immediately and remain active until:
 * Changed again
 * Server restarts (unless also set via env vars)
 
----
-
 ### Adjust Strike Thresholds & Timing
 
 ```text
-/setmaxstrikes <number>
-/setkickat <number>
-/setbanat <number>
-/setmuteduration <seconds>
+/setmaxstrikes <number>        (sets number of strikes before auto-mute)
+/setkickat <number>            (sets number of strikes to auto-kick at)
+/setbanat <number>             (sets number of strikes to auto-ban at)
+/setmuteduration <seconds>     (sets how long in seconds to mute a player)
 ```
+Note: setting `/setmuteduration` to `0` enables a permanent mute of the selected player
 
 Examples:
 
@@ -214,14 +232,13 @@ Examples:
 ```
 
 
-
 ## How Admin Settings Interact
 
 | Source                | When Applied | Priority |
 | --------------------- | ------------ | -------- |
 | Lua defaults          | On load      | Lowest   |
 | Environment variables | On startup   | Medium   |
-| Admin chat commands   | Runtime      | Highest  |
+| Admin chat commands   | In-game      | Highest  |
 
 * Chat commands **override everything** until restart
 * Environment variables override Lua defaults but **not** runtime commands
@@ -231,13 +248,13 @@ Examples:
 ## ⚠ Common Issues
 
 * Admins are matched by **playerId**, not name
-* `/unban` requires the player to be resolvable by name
-* Admin changes made in chat are **not persistent**
-* Bans are memory-only unless extended, and are **not persistent**
+* `/unban` requires the playerId rather than player name
+* Admin changes made in chat are **not persistent** across restarts
+* Bans are memory-only unless extended, and are **not persistent** across restarts
 
 
 
-## Configuration Options
+## Configuration Options in lua
 
 ### Default Settings (Editable in Lua `__init__.lua`)
 
@@ -258,128 +275,81 @@ ChatFilter.BanAtStrikes      = 7
 ```
 
 
-## Environment Variable List
+## Environment Variable List (For Docker)
 
 These override Lua defaults **at startup**.
 
-| Variable                          | Description                              |
-| --------------------------------- | ---------------------------------------- |
-| `KYBER_CHAT_FILTER_BLOCK_MESSAGE` | Block flagged messages (`true/false`)    |
-| `KYBER_CHAT_FILTER_LOGGING`       | Enable server logging (`true/false`)     |
-| `KYBER_CHAT_FILTER_HOST_ALERT`    | Enable host alerts  (`true/false`)       |
-| `KYBER_CHAT_FILTER_STRIKE_TRACK`  | Enable strike tracking (`true/false`)    |
-| `KYBER_CHAT_FILTER_AUTO_MUTE`     | Enable auto-mute (`true/false`)          |
-| `KYBER_CHAT_FILTER_AUTO_KICK`     | Enable auto-kick (`true/false`)          |
-| `KYBER_CHAT_FILTER_AUTO_BAN`      | Enable auto-ban (`true/false`)           |
-| `KYBER_CHAT_FILTER_MAX_STRIKES`   | Strikes before mute (`int`)              |
-| `KYBER_CHAT_FILTER_MUTE_TIME`     | Mute duration (seconds, `0` = permanent) |
-| `KYBER_CHAT_FILTER_KICK_AT`       | Strikes before kick (`int`)              |
-| `KYBER_CHAT_FILTER_BAN_AT`        | Strikes before ban (`int`)               |
+| Env Variable                      | Description                              | Lua Variable Modified           |
+| --------------------------------- | ---------------------------------------- | ------------------------------- |
+| `KYBER_CHAT_FILTER_BLOCK_MESSAGE` | Block flagged messages (`true/false`)    |  `ChatFilter.BlockMessage`      |
+| `KYBER_CHAT_FILTER_LOGGING`       | Enable server logging (`true/false`)     |  `ChatFilter.EnableLogging`     |
+| `KYBER_CHAT_FILTER_HOST_ALERT`    | Enable host alerts  (`true/false`)       |  `ChatFilter.EnableHostAlert`   |
+| `KYBER_CHAT_FILTER_STRIKE_TRACK`  | Enable strike tracking (`true/false`)    |  `ChatFilter.EnableStrikeTrack` |
+| `KYBER_CHAT_FILTER_AUTO_MUTE`     | Enable auto-mute (`true/false`)          |  `ChatFilter.EnableAutoMute`    |
+| `KYBER_CHAT_FILTER_AUTO_KICK`     | Enable auto-kick (`true/false`)          |  `ChatFilter.EnableAutoKick`    |
+| `KYBER_CHAT_FILTER_AUTO_BAN`      | Enable auto-ban (`true/false`)           |  `ChatFilter.EnableAutoBan`     |
+| `KYBER_CHAT_FILTER_MAX_STRIKES`   | Strikes before mute (`int`)              |  `ChatFilter.MaxStrikes`        |
+| `KYBER_CHAT_FILTER_MUTE_TIME`     | Mute duration (seconds, `0` = permanent) |  `ChatFilter.MuteDuration`      |
+| `KYBER_CHAT_FILTER_KICK_AT`       | Strikes before kick (`int`)              |  `ChatFilter.KickAtStrikes`     |
+| `KYBER_CHAT_FILTER_BAN_AT`        | Strikes before ban (`int`)               |  `ChatFilter.BanAtStrikes`      |
+| `KYBER_CHAT_FILTER_ADMINS`        | Additional admin playerIds (`Id1:Id2`)   |   merged with `admins.lua`      |
 
-Boolean values accept:
+Boolean values accepted:
 
 ```
 1, true, yes, on
 0, false, no, off
 ```
 
----
+### Example Strike Flow:
 
-## In-Game Admin Commands
+- Strike 1–2: no action (can add player warning if desired)
+- Strike 3: Player is muted
+- Strike 5: Player is kicked
+- Strike 7: Player is banned
 
-All commands:
+### Chat Moderation Flow Diagram
 
-* Must be issued by an admin
-* Start with `/`
-* Are **not shown in chat**
-
----
-
-### Feature Toggles
-
-```text
-/enableblockmessage
-/disableblockmessage
-
-/enablelogging
-/disablelogging
-
-/enablehostalert
-/disablehostalert
-
-/enablestriketrack
-/disablestriketrack
-
-/enableautomute
-/disableautomute
+```
+Chat Message
+   ↓
+Normalization & Matching
+   ↓
+Strike Added (if enabled)
+   ↓
+Message Blocked (if enabled)
+   ↓
+Threshold Check (if enabled)
+   ├─ Mute
+   ├─ Kick
+   └─ Ban
 ```
 
----
+## Bans and Kicks
 
-### Threshold & Timing Controls
+* Kicks and bans are evaluated immediately after a strike is added.
+* If a player crosses multiple thresholds at once, only the highest action is applied.
 
-```text
-/setmaxstrikes <number>
-/setkickat <number>
-/setbanat <number>
-/setmuteduration <seconds>
-```
-
-Examples:
-
-```text
-/setmaxstrikes 3
-/setkickat 5
-/setbanat 7
-/setmuteduration 0   (permanent mute)
-```
-
----
-
-## 🛠 Moderation Commands (Non-Toggle)
-
-These commands directly affect players.
-
-### Mute a Player
-
-```text
-/mute <playerName> [seconds]
-```
-
-* Seconds optional
-* `0` or omitted = permanent
-* Admins cannot mute other admins
-
-### Unmute a Player
-
-```text
-/unmute <playerName>
-```
-
-### Unban a Player
-
-```text
-/unban <playerName>
-```
-
-### List Admins
-
-```text
-/listadmins
-```
-
-* Shows online admins by name
-* Shows offline admins by playerId
-
----
-
-## Bans
+### Bans
 
 * Banned players are kicked **on join**
-* Stored in memory (non-persistent by default)
+* Bans are stored in memory (non-persistent across server restarts)
 * Admins are immune to auto-ban logic
+* `/unban` command requires playerId instead of PlayerName due to how the Kyber api works with offline player lookup
 
----
+## Performance Notes
+
+- Banned words are compiled into lookup tables on startup
+- Normal chat messages incur minimal overhead
+- Aggressive spaced-letter detection is only applied when needed
+
+
+## Safety Defaults
+
+- Auto-ban is disabled by default
+- Admins are always exempt from automation
+- False-positive reduction is prioritized over aggressive matching
+
 
 ## Debugging
 
@@ -397,15 +367,20 @@ KYBER_LOG_LEVEL=debug
 
 This prints detailed matching and decision logs to the server console.
 
----
-
 ## ⚠ Notes & Limitations
 
 * Bans are **not persistent across restarts** unless extended
 * Host alerting is stubbed (ready for Discord or event viewer integration)
 * Player lookup by name is case-insensitive but requires the player to be online
 
----
+## Planned Future Features
+
+* Optional JSON-backed persistence for strikes, mutes, and bans
+* Optional player warning messages if chat is flagged
+* Discord integration option for logging
+* Ability to push logged events to the Kyber client Event Log
+* General cleanup of `__init__.lua` for easier readability
+* Real time chat filtering without blocking message (e.g `example chat message` --> `example **** message`)
 
 
 

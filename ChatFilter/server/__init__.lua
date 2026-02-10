@@ -814,27 +814,28 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
             -- unbans player by passing playerName in chat
             if command == "unban" then
                 if #messageSplit < 2 then
-                    logEvent("Usage: /unban <playerName>", 0)
+                    logEvent("Usage: /unban <playerId>", 0)
                     return
                 end
 
-                -- convert player name to player ID
-                local targetName = messageSplit[2]
-                local targetId, resolvedName = getPlayerIdByName(targetName)
+                -- convert player ID string to int
+                local targetId = tonumber(messageSplit[2])
 
                 if not targetId then
-                    logEvent("Player not found: " .. targetName, 0)
+                    logEvent("Invalid playerId", 0)
                     return
                 end
 
+                -- check if player is not banned
                 if not bannedPlayers[targetId] then
-                    logEvent(resolvedName .. " has been unbanned", 2)
+                    logEvent("PlayerId " .. targetId .. " is not banned", 0)
                     return
                 end
 
-                -- set banned player to nil
+                -- set banned player to nil and reset strikes
                 bannedPlayers[targetId] = nil
-                logEvent("Admin unbanned " .. resolvedName .. " (" .. targetId .. ")", 2)
+                strikes[targetId] = nil
+                logEvent("Admin unbanned playerId " .. targetId, 2)
                 return
             end
 
