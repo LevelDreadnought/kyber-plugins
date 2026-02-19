@@ -22,7 +22,7 @@ Timer = {}
 Timer.__index = Timer
 
 function Timer.new(interval, callback)
-    local obj = setmetatable({}, self)
+    local obj = setmetatable({}, Timer)
     obj.interval = interval
     obj.callback = callback
     obj.elapsed = 0
@@ -36,11 +36,12 @@ function Timer:cancel()
 end
 
 function SetTimeout(callback, delay)
-    Timer:new(delay, function(timer)
+    Timer.new(delay, function(timer)
         callback()
         timer:cancel()
     end)
 end
+
 
 return {
     Timer = Timer,

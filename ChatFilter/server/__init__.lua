@@ -1,4 +1,6 @@
--- local Timer = require "common/timer".Timer
+local TimerModule = require "common/timer"
+local Timer = TimerModule.Timer
+local SetTimeout = TimerModule.SetTimeout
 
 -- prints text to the debug log only when env is set
 local DebugLog = function(s)
@@ -7,7 +9,11 @@ local DebugLog = function(s)
     end
 end
 
-local admins = require "admins"
+local roles = require "admins"
+
+local admins = roles.Admins or {}
+local moderators = roles.Moderators or {}
+
 
 -- ==========================================================
 -- Kyber Chat Filter Plugin
@@ -28,43 +34,46 @@ local ChatFilter = {}
 -- Configuration
 
 
-ChatFilter.BannedWords       = require "filtered_word_list"
+ChatFilter.BannedWords         = require "filtered_word_list"
 
-ChatFilter.AlertPrefix       = "Detection:"
-ChatFilter.ErrorPrefix       = "Error:"
-ChatFilter.ActionPrefix      = "Action:"
-ChatFilter.BlockMessage      = true
-ChatFilter.EnableLogging     = true
-ChatFilter.EnableHostAlert   = false
+ChatFilter.AlertPrefix         = "Detection:"
+ChatFilter.ErrorPrefix         = "Error:"
+ChatFilter.ActionPrefix        = "Action:"
+ChatFilter.BlockMessage        = true
+ChatFilter.EnableLogging       = true
+ChatFilter.EnableHostAlert     = false
 
--- strike / mute / kick/ ban system toggles
-ChatFilter.EnableStrikeTrack = true
-ChatFilter.EnableAutoMute    = true
-ChatFilter.EnableAutoKick    = true
-ChatFilter.EnableAutoBan     = false
+-- strike / mute / kick / ban system toggles
+ChatFilter.EnableStrikeTrack   = true
+ChatFilter.EnableAutoMute      = true
+ChatFilter.EnableAutoKick      = true
+ChatFilter.EnableAutoBan       = false
+ChatFilter.EnableTimedAutoBan  = true
 
-ChatFilter.MaxStrikes        = 3      -- strikes before mute
-ChatFilter.MuteDuration      = 300    -- time in seconds (set to 0 for permanent mute)
-ChatFilter.KickAtStrikes     = 5
-ChatFilter.BanAtStrikes      = 7
+ChatFilter.MaxStrikes          = 3     -- strikes before mute
+ChatFilter.MuteDuration        = 5     -- time in minutes, (set to 0 for permanent mute)
+ChatFilter.AutoBanDuration     = 60    -- time in minutes, 60 default
+ChatFilter.KickAtStrikes       = 5
+ChatFilter.BanAtStrikes        = 7
 
 
 -- environment variables
 
-local AdditionalAdmins <const>    = "KYBER_CHAT_FILTER_ADMINS" -- format: ="<playerId_1>:<playerId_2>"
+local AdditionalAdmins <const>     = "KYBER_CHAT_FILTER_ADMINS" -- format: ="<playerId_1>:<playerId_2>"
+local AdditionalModerators <const> = "KYBER_CHAT_FILTER_MODERATORS" -- format: ="<playerId_1>:<playerId_2>"
 
-local BlockMessageEnvName <const> = "KYBER_CHAT_FILTER_BLOCK_MESSAGE"
-local LoggingEnvName <const>      = "KYBER_CHAT_FILTER_LOGGING"
-local HostAlertEnvName <const>    = "KYBER_CHAT_FILTER_HOST_ALERT"
-local StrikeTrackEnvName <const>  = "KYBER_CHAT_FILTER_STRIKE_TRACK"
-local AutoMuteEnvName <const>     = "KYBER_CHAT_FILTER_AUTO_MUTE"
-local AutoKickEnvName <const>     = "KYBER_CHAT_FILTER_AUTO_KICK"
-local AutoBanEnvName <const>      = "KYBER_CHAT_FILTER_AUTO_BAN"
+local BlockMessageEnvName <const>  = "KYBER_CHAT_FILTER_BLOCK_MESSAGE"
+local LoggingEnvName <const>       = "KYBER_CHAT_FILTER_LOGGING"
+local HostAlertEnvName <const>     = "KYBER_CHAT_FILTER_HOST_ALERT"
+local StrikeTrackEnvName <const>   = "KYBER_CHAT_FILTER_STRIKE_TRACK"
+local AutoMuteEnvName <const>      = "KYBER_CHAT_FILTER_AUTO_MUTE"
+local AutoKickEnvName <const>      = "KYBER_CHAT_FILTER_AUTO_KICK"
+local AutoBanEnvName <const>       = "KYBER_CHAT_FILTER_AUTO_BAN"
 
-local MaxStrikesEnvName <const>   = "KYBER_CHAT_FILTER_MAX_STRIKES"
-local MuteDurationEnvName <const> = "KYBER_CHAT_FILTER_MUTE_TIME"
-local KickAtEnvName <const>       = "KYBER_CHAT_FILTER_KICK_AT"
-local BanAtEnvName <const>        = "KYBER_CHAT_FILTER_BAN_AT"
+local MaxStrikesEnvName <const>    = "KYBER_CHAT_FILTER_MAX_STRIKES"
+local MuteDurationEnvName <const>  = "KYBER_CHAT_FILTER_MUTE_TIME"
+local KickAtEnvName <const>        = "KYBER_CHAT_FILTER_KICK_AT"
+local BanAtEnvName <const>         = "KYBER_CHAT_FILTER_BAN_AT"
 
 
 
@@ -191,6 +200,16 @@ do
         end
     end
 
+    -- checks auto ban env var
+    v = getEnv(AutoBanEnvName)
+    if v then
+        local b = parseBool(v)
+        if b ~= nil then
+            ChatFilter.EnableAutoBan = b
+            DebugLog("Env override: EnableAutoBan = " .. tostring(b))
+        end
+    end
+
     -- checks max strikes env var
     v = getEnv(MaxStrikesEnvName)
     if v then
@@ -211,7 +230,7 @@ do
         end
     end
 
-    -- gets playerIds from env var and checks for dupes against the list from admin.lua
+    -- gets adminIds from env var and checks for dupes against the list from admin.lua
     v = getEnv(AdditionalAdmins)
     if v then
         for rawId in v:gmatch("([^:]+)") do
@@ -226,7 +245,76 @@ do
             end
         end
     end
+
+    -- gets moderator IDs from env var and checks for dupes against the list from admin.lua
+    v = getEnv(AdditionalModerators)
+    if v then
+        for rawId in v:gmatch("([^:]+)") do
+            local id = tonumber(rawId:match("^%s*(.-)%s*$"))
+
+            if id then
+                local added = addAdminByEnv(moderators, id)
+                if added then
+                    DebugLog("Env override: added moderator " .. id)
+                end
+            end
+        end
+    end
+
 end
+
+-- #########################################################
+
+-- time conversion functions
+
+-- parses duration input and converts to seconds for use in os.time()
+-- 30    -> 30 minutes
+-- 24h   -> 24 hours
+-- 7d    -> 7 days
+-- 0     -> permanent
+-- returns seconds
+local function parseDuration(input)
+    if input == nil then return nil end
+
+    input = tostring(input):lower():gsub("%s+", "")
+
+    if input == "0" then
+        return 0
+    end
+
+    -- days format "d" (e.g. 7d)
+    local days = input:match("^(%d+)d$")
+    if days then
+        return tonumber(days) * 24 * 60 * 60
+    end
+
+    -- hours format "h" (e.g., 24h)
+    local hours = input:match("^(%d+)h$")
+    if hours then
+        return tonumber(hours) * 60 * 60
+    end
+
+    -- plain number = minutes
+    local minutes = tonumber(input)
+    if minutes then
+        return minutes * 60
+    end
+
+    return nil
+end
+
+-- convert mute duration (minutes/hours format) to seconds
+local parsedMute = parseDuration(ChatFilter.MuteDuration)
+if parsedMute then
+    ChatFilter.MuteDuration = parsedMute
+end
+
+-- convert auto-ban duration to seconds
+local parsedBan = parseDuration(ChatFilter.AutoBanDuration)
+if parsedBan then
+    ChatFilter.AutoBanDuration = parsedBan
+end
+
 
 
 -- #########################################################
@@ -265,7 +353,7 @@ local obfuscationMap = {
 
 -- #########################################################
 
--- utilitiy functions
+-- utility functions
 
 -- properly handles escape characters
 local function escapePattern(s)
@@ -316,6 +404,19 @@ string.split = function(str, sep)
     return t
 end
 
+-- properly converts time to a human readable format
+local function formatDuration(seconds)
+    if seconds == 0 then return "permanently" end
+    if seconds % 86400 == 0 then
+        return (seconds / 86400) .. "d"
+    elseif seconds % 3600 == 0 then
+        return (seconds / 3600) .. "h"
+    else
+        return (seconds / 60) .. "m"
+    end
+end
+
+
 -- handles three letter words and proper spaces via regex spaced-letter pattern
 local function buildSpacedPattern(word)
     -- "ban" → b[%s%p]*a[%s%p]*n
@@ -365,6 +466,11 @@ end
 -- checks if player is admin and converts playerId to string if player.playerID returns an int
 local function isAdmin(playerId)
     return table.contains(admins, playerId)
+end
+
+-- checks if player is admin and converts playerId to string if player.playerID returns an int
+local function isModerator(playerId)
+    return table.contains(moderators, playerId)
 end
 
 
@@ -426,14 +532,17 @@ end
 local function mutePlayer(playerId)
     if not ChatFilter.EnableAutoMute then return end
 
-    if ChatFilter.MuteDuration == 0 then
+    -- convert to seconds
+    local durationSeconds = ChatFilter.MuteDuration -- parseDuration(ChatFilter.MuteDuration)
+
+    if durationSeconds == 0 then
         -- unlimited mute when 0
         mutedPlayers[playerId] = {
             expires = nil
         }
     else
         mutedPlayers[playerId] = {
-            expires = os.time() + ChatFilter.MuteDuration
+            expires = os.time() + durationSeconds
         }
     end
 end
@@ -442,23 +551,45 @@ end
 local function kickPlayer(player, reason)
     if not ChatFilter.EnableAutoKick then return end
     if player and player.kick then
-        player:kick(reason or "Kicked by server moderation")
+        player:Kick(reason or "Kicked by server moderation")
     end
 end
 
 -- bans player after a certain number of strikes
-local function banPlayer(playerId, name)
-    if not ChatFilter.EnableAutoBan then return end
+local function banPlayer(playerId, name, duration, reason, manual)
+    local expires = nil
+
+    if duration and duration > 0 then
+        expires = os.time() + duration
+    end
+
     bannedPlayers[playerId] = {
         name = name,
-        time = os.time()
+        time = os.time(),
+        expires = expires,
+        reason = reason,
+        manual = manual or false
     }
 end
 
--- checks if player is banned
+
+-- checks if player is banned and for how long
 local function isBanned(playerId)
-    return bannedPlayers[playerId] ~= nil
+    local ban = bannedPlayers[playerId]
+    if not ban then return false end
+
+    if ban.expires == nil then
+        return true
+    end
+
+    if os.time() >= ban.expires then
+        bannedPlayers[playerId] = nil
+        return false
+    end
+
+    return true
 end
+
 
 
 
@@ -470,6 +601,15 @@ end
 local function hasSpacedLetters(msg)
     -- matches: w o r d / w-o-r-d / w _ o _ r _ d
     return msg:find("%w[%s%p]+%w[%s%p]+%w") ~= nil
+end
+
+-- checks for admin permissions
+local function requireAdmin(player)
+    if not isAdmin(player.playerId) then
+        logEvent("Permission denied", 0)
+        return false
+    end
+    return true
 end
 
 
@@ -542,7 +682,7 @@ function ChatFilter.OnPlayerChat(player, message)
         if ChatFilter.EnableAutoBan
             and ChatFilter.BanAtStrikes > 0
             and strikeCount >= ChatFilter.BanAtStrikes
-            and not isBanned(playerId) then
+            and not bannedPlayers[playerId] then
 
             -- check if player is admin, return false if true
             if isAdmin(playerId) then
@@ -550,7 +690,14 @@ function ChatFilter.OnPlayerChat(player, message)
                 return false
             end
 
-            banPlayer(playerId, playerName)
+            -- checks if timed auto bans are enabled
+            local duration = nil
+            if ChatFilter.EnableTimedAutoBan then
+                duration = ChatFilter.AutoBanDuration -- parseDuration(ChatFilter.AutoBanDuration)
+            end
+
+            banPlayer(playerId, playerName, duration)
+
             logEvent(playerName .. " (" .. playerId .. ") has been banned", 2)
             kickPlayer(player, "You have been banned for repeated chat filter violations")
             return false
@@ -585,7 +732,7 @@ function ChatFilter.OnPlayerChat(player, message)
                 logEvent(playerName .. " (" .. playerId .. ") muted permanently", 2)
             else
                 logEvent(playerName .. " (" .. playerId .. ") muted for "
-                    .. ChatFilter.MuteDuration .. " seconds", 2)
+                    .. formatDuration(ChatFilter.MuteDuration), 2)
             end
         end
     end
@@ -599,9 +746,12 @@ end
 EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
     DebugLog("message event hooked")
 
+    -- define admins and mods
+    local isAdminUser = isAdmin(player.playerId)
+    local isModUser   = isModerator(player.playerId)
 
     -- check if player is admin and handle commands if true
-    if isAdmin(player.playerId) then
+    if isAdminUser or isModUser then
 
         local messageSplit = string.split(message)
 
@@ -617,11 +767,17 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
 
             -- toggle block message
             if command == "enableblockmessage" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.BlockMessage = true
                 logEvent("BlockMessage enabled")
                 return
             end
             if command == "disableblockmessage" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.BlockMessage = false
                 logEvent("BlockMessage disabled")
                 return
@@ -629,47 +785,74 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
 
             -- toggle logging
             if command == "enablelogging" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.EnableLogging = true
                 logEvent("Logging enabled")
                 return
             end
             if command == "disablelogging" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.EnableLogging = false
                 logEvent("Logging disabled")
                 return
             end
 
             -- toggle host alert
+
             if command == "enablehostalert" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.EnableHostAlert = true
                 logEvent("EnableHostAlert enabled")
                 return
             end
             if command == "disablehostalert" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.EnableHostAlert = false
                 logEvent("EnableHostAlert disabled")
                 return
             end
 
             -- toggle strike tracking
+
             if command == "enablestriketrack" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.EnableStrikeTrack = true
                 logEvent("StrikeTrack enabled")
                 return
             end
             if command == "disablestriketrack" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.EnableStrikeTrack = false
                 logEvent("StrikeTrack disabled")
                 return
             end
 
             -- toggle auto mute
+
             if command == "enableautomute" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.EnableAutoMute = true
                 logEvent("AutoMute enabled")
                 return
             end
             if command == "disableautomute" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 ChatFilter.EnableAutoMute = false
                 logEvent("AutoMute disabled")
                 return
@@ -677,6 +860,9 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
 
             -- set max strikes
             if command == "setmaxstrikes" then
+
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
 
                 if #messageSplit <= 1 then
                     logEvent("Command is missing parameters", 0)
@@ -698,6 +884,10 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
 
             -- set strikes to auto-kick player at
             if command == "setkickat" then
+
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 if #messageSplit <= 1 then
                     logEvent("Usage: /setkickat <number>", 0)
                     return
@@ -716,6 +906,10 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
 
             -- set strikes to auto-ban player at
             if command == "setbanat" then
+
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 if #messageSplit <= 1 then
                     logEvent("Usage: /setbanat <number>", 0)
                     return
@@ -735,19 +929,22 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
             -- set mute duration
             if command == "setmuteduration" then
 
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 if #messageSplit <= 1 then
-                    logEvent("Command is missing parameters", 0)
+                    logEvent("Usage: /setmuteduration [time (0 for permanent)]", 0)
                     return
                 end
 
-                local muteNumber = table.concat(messageSplit, " ", 2)
-                local value = tonumber(muteNumber)
-                if not value then -- checks if value set is actually a number
-                    logEvent("Invalid number", 0)
+                local duration = parseDuration(messageSplit[2])
+                if duration == nil then -- checks if value set is actually a number
+                    logEvent("Invalid duration format", 0)
                     return
                 end
 
-                ChatFilter.MuteDuration = value
+                ChatFilter.MuteDuration = duration
+
                 logEvent("MuteDuration set to " .. ChatFilter.MuteDuration)
                 return
 
@@ -756,12 +953,12 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
             -- mute player by passing playerName in chat
             if command == "mute" then
                 if #messageSplit < 2 then
-                    logEvent("Usage: /mute <playerName> [seconds (0 for permanent)]", 0)
+                    logEvent("Usage: /mute <playerName> [time (0 for permanent)]", 0)
                     return
                 end
 
                 local targetName = messageSplit[2]
-                local duration = tonumber(messageSplit[3])
+                local duration = parseDuration(messageSplit[3])
 
                 -- convert player name to player ID
                 local targetId, resolvedName = getPlayerIdByName(targetName)
@@ -773,15 +970,21 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
 
                 -- prevent muting admins
                 if isAdmin(targetId) then
-                    logEvent("Cannot mute another admin", 0)
+                    logEvent("Cannot mute an admin", 0)
+                    return
+                end
+
+                -- prevent moderators from muting other moderators
+                if isModerator(targetId) and not isAdminUser then
+                    logEvent("Cannot mute another moderator", 0)
                     return
                 end
 
                 -- apply mute
                 mutedPlayers[targetId] = {
                     expires = (duration and duration > 0)
-                        and (os.time() + duration)
-                        or nil
+                    and (os.time() + duration)
+                    or nil
                 }
 
                 -- log mute event
@@ -808,6 +1011,64 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
                 -- set muted player to nil
                 mutedPlayers[targetId] = nil
                 logEvent("Admin unmuted " .. resolvedName .. " (" .. targetId .. ")", 2)
+                return
+            end
+
+            -- manual ban by passing playerName in chat
+            if command == "ban" then
+                if #messageSplit < 2 then
+                    logEvent("Usage: /ban <playerName> <duration> <reason>", 0)
+                    return
+                end
+
+                local targetName = messageSplit[2]
+                local targetId, resolvedName = getPlayerIdByName(targetName)
+
+                -- parses ban duration and reason from chat, reason default set if empty
+                local durationInput = messageSplit[3]
+                local duration = parseDuration(durationInput)
+
+                local reasonStartIndex = duration and 4 or 3
+                local reason = table.concat(messageSplit, " ", reasonStartIndex)
+                if reason == "" then
+                    reason = "You have been banned"
+                end
+
+
+                if not targetId then
+                    logEvent("Player not found: " .. targetName, 0)
+                    return
+                end
+
+                -- prevent banning admins
+                if isAdmin(targetId) then
+                    logEvent("Cannot ban an admin", 0)
+                    return
+                end
+
+                -- prevent moderators from banning other moderators
+                if isModerator(targetId) and not isAdminUser then
+                    logEvent("Cannot ban another moderator", 0)
+                    return
+                end
+
+                -- checks if player is already banned
+                if isBanned(targetId) then
+                    logEvent(resolvedName .. " is already banned", 0)
+                    return
+                end
+
+                -- add to banned list with a manual ban marker and reason
+                banPlayer(targetId, resolvedName, duration, reason, true)
+
+                logEvent("Admin banned " .. resolvedName .. " (" .. targetId .. ")", 2)
+
+                -- kick immediately if online
+                local targetPlayer = getPlayerById(targetId)
+                if targetPlayer then
+                    targetPlayer:Kick(reason)
+                end
+
                 return
             end
 
@@ -839,8 +1100,23 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
                 return
             end
 
+            -- command to list a;ll banned players
+            if command == "listbans" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
+                logEvent("Banned Players:")
+                for id, data in pairs(bannedPlayers) do
+                    logEvent((data.name or "Unknown") .. " (" .. id .. ")")
+                end
+                return
+            end
+
             -- command to list admins (online and offline)
             if command == "listadmins" then
+                -- checks for admin permissions
+                if not requireAdmin(player) then return end
+
                 logEvent("Admins:")
 
                 for _, adminId in ipairs(admins) do
@@ -857,9 +1133,48 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
                 return
             end
 
+            -- command to list moderators (online and offline)
+            if command == "listmods" then
+                logEvent("Moderators:")
+
+                for _, modId in ipairs(moderators) do
+                    local p = getPlayerById(modId)
+
+                    if p then
+                        logEvent(p.name .. " (" .. modId .. ")")
+                    else
+                        logEvent("Offline (" .. modId .. ")")
+                    end
+                end
+
+                return
+            end
+
+            -- set health and set max health (for admins and mods only spawned in as klaud)
+            if command == "sethealth" then
+
+                if #messageSplit <= 1 then
+                    logEvent("Usage: /sethealth <number>", 0)
+                    return
+                end
+
+                local value = tonumber(messageSplit[2])
+                if not value or value <= 0 then -- checks if value set is a valid number and non zero
+                    logEvent("Invalid number", 0)
+                    return
+                end
+
+                -- sets player health and max health
+                player:SetMaxHealth(value)
+                player:SetHealth(value)
+
+                logEvent("Player health set to " .. value)
+                return
+            end
+
 
             -- if message doesn't match a listed command, log error
-            logEvent("Invalid admin command", 0)
+            logEvent("Invalid command", 0)
             return
 
 
@@ -877,11 +1192,20 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
 end)
 
 -- listens for player joining server
-EventManager.Listen("Server:PlayerJoined", function(player)
+EventManager.Listen("ServerPlayer:Joined", function(player)
 
     -- auto-kicks player on join if they are in the banned list
     if isBanned(player.playerId) then
-        player:kick("You are banned from this server for repeated chat filter violations")
+        local ban = bannedPlayers[player.playerId]
+        local msg = ban.reason or "You are banned from this server"
+        -- Delay kick slightly to ensure player is fully initialized
+        SetTimeout(function()
+            if player then
+                print("Kicking player")
+                player:Kick(msg)
+            end
+        end, 5)
+
     end
 
 end)
