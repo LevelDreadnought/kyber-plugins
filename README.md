@@ -327,7 +327,7 @@ Changes apply immediately and remain active until:
 /setmuteduration <seconds>       (sets duration to auto-mute a player for)
 /setautobanduration <duration>   (sets duration to auto-mute a player for)
 ```
-Note: Supports duration parsing, see this [section](#In-Game-Moderation-Commands-(Via-Game-Chat)) for duration examples
+Note: Supports duration parsing, see this [section](#in-game-moderation-commands-via-game-chat) for duration examples
 
 Examples:
 
@@ -445,7 +445,7 @@ These override Lua defaults **at startup**.
 | `KYBER_CHAT_FILTER_AUTO_KICK`     | Enable auto-kick (`true/false`)          |  `ChatFilter.EnableAutoKick`    |
 | `KYBER_CHAT_FILTER_AUTO_BAN`      | Enable auto-ban (`true/false`)           |  `ChatFilter.EnableAutoBan`     |
 | `KYBER_CHAT_FILTER_MAX_STRIKES`   | Strikes before mute (`int`)              |  `ChatFilter.MaxStrikes`        |
-| `KYBER_CHAT_FILTER_MUTE_TIME`     | Mute duration (seconds, `0` = permanent) |  `ChatFilter.MuteDuration`      |
+| `KYBER_CHAT_FILTER_MUTE_TIME`     | Mute duration (`0` = permanent)          |  `ChatFilter.MuteDuration`      |
 | `KYBER_CHAT_FILTER_KICK_AT`       | Strikes before kick (`int`)              |  `ChatFilter.KickAtStrikes`     |
 | `KYBER_CHAT_FILTER_BAN_AT`        | Strikes before ban (`int`)               |  `ChatFilter.BanAtStrikes`      |
 | `KYBER_CHAT_FILTER_ADMINS`        | Additional admin playerIds (`Id1:Id2`)   |   merged with `admins.lua`      |
