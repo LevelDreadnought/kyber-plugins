@@ -319,6 +319,25 @@ end
 
 -- #########################################################
 
+-- properly handles escape characters
+local function escapePattern(s)
+    return s:gsub("(%W)", "%%%1")
+end
+
+-- handles three letter words and proper spaces via regex spaced-letter pattern
+local function buildSpacedPattern(word)
+    -- "ban" → b[%s%p]*a[%s%p]*n
+    local pattern = {}
+
+    for c in word:gmatch(".") do
+        local escaped = escapePattern(c)
+        table.insert(pattern, escaped)
+    end
+
+    -- require at least one separator somewhere in the message
+    return table.concat(pattern, "[%s%p]*")
+end
+
 
 -- Convert banned word list into a lookup table (is much faster than an array/list)
 
@@ -329,7 +348,8 @@ for _, word in ipairs(ChatFilter.BannedWords) do
     -- word-boundary regex to reduce false positives (%f[])
     table.insert(bannedPatterns, {
         word = w,
-        pattern = "%f[%w]" .. w .. "%f[%W]"
+        boundaryPattern = "%f[%w]" .. w .. "%f[%W]",
+        spacedPattern = "%f[%w]" .. buildSpacedPattern(w) .. "%f[%W]"
     })
 end
 
@@ -354,11 +374,6 @@ local obfuscationMap = {
 -- #########################################################
 
 -- utility functions
-
--- properly handles escape characters
-local function escapePattern(s)
-    return s:gsub("(%W)", "%%%1")
-end
 
 
 -- normalizes chat message based on obfuscationMap
@@ -414,21 +429,6 @@ local function formatDuration(seconds)
     else
         return (seconds / 60) .. "m"
     end
-end
-
-
--- handles three letter words and proper spaces via regex spaced-letter pattern
-local function buildSpacedPattern(word)
-    -- "ban" → b[%s%p]*a[%s%p]*n
-    local pattern = {}
-
-    for c in word:gmatch(".") do
-        local escaped = escapePattern(c)
-        table.insert(pattern, escaped)
-    end
-
-    -- require at least one separator somewhere in the message
-    return table.concat(pattern, "[%s%p]*")
 end
 
 -- finds playerId by player name (case-insensitive)
@@ -550,7 +550,7 @@ end
 -- kicks player after a certain number of strikes
 local function kickPlayer(player, reason)
     if not ChatFilter.EnableAutoKick then return end
-    if player and player.kick then
+    if player then
         player:Kick(reason or "Kicked by server moderation")
     end
 end
@@ -583,7 +583,9 @@ local function isBanned(playerId)
     end
 
     if os.time() >= ban.expires then
+        -- end ban and reset strikes
         bannedPlayers[playerId] = nil
+        strikes[playerId] = nil
         return false
     end
 
@@ -617,22 +619,17 @@ end
 function ChatFilter.ContainsBannedWord(message)
     local normalized = fullyNormalizeChat(message)
 
-    -- check 1: regex word-boundary detection (reduces false positives)
     for _, entry in ipairs(bannedPatterns) do
-        if normalized:find(entry.pattern) then
-            DebugLog("word flagged by check 1")
+        -- check 1: regex word-boundary detection (reduces false positives)
+        if normalized:find(entry.boundaryPattern) then
+            DebugLog("word flagged by check 1 boundary match")
             return true, entry.word
         end
-    end
 
-    -- check 2: spaced / punctuated letters (safe for 3-letter words)
-    for banned, _ in pairs(ChatFilter.BannedWords) do
-        local spacedPattern = buildSpacedPattern(banned)
-
-        -- require at least one separator to avoid normal words
-        if normalized:find("%f[%w]" .. spacedPattern .. "%f[%W]") then
-            DebugLog("word flagged by check 2")
-            return true, banned
+        if normalized:find(entry.spacedPattern) then
+            -- check 2: spaced / punctuated letters (safe for 3-letter words)
+            DebugLog("word flagged by check 2 spaced match")
+            return true, entry.word
         end
     end
 
@@ -651,7 +648,8 @@ function ChatFilter.OnPlayerChat(player, message)
 
     -- mute enforcement
     if isMuted(playerId) and not isAdmin(playerId) then
-        logEvent("Blocked message from muted player: " .. playerName)
+        logEvent("Blocked message from muted player: " .. playerName ..
+            " | Message: " .. message)
         return false
     end
 
@@ -682,7 +680,7 @@ function ChatFilter.OnPlayerChat(player, message)
         if ChatFilter.EnableAutoBan
             and ChatFilter.BanAtStrikes > 0
             and strikeCount >= ChatFilter.BanAtStrikes
-            and not bannedPlayers[playerId] then
+            and not isBanned(playerId) then
 
             -- check if player is admin, return false if true
             if isAdmin(playerId) then
@@ -696,9 +694,15 @@ function ChatFilter.OnPlayerChat(player, message)
                 duration = ChatFilter.AutoBanDuration -- parseDuration(ChatFilter.AutoBanDuration)
             end
 
-            banPlayer(playerId, playerName, duration)
+            banPlayer(
+                playerId,
+                playerName,
+                duration,
+                "Auto-ban: repeated chat violations",
+                false
+            )
 
-            logEvent(playerName .. " (" .. playerId .. ") has been banned", 2)
+            logEvent(playerName .. " (" .. playerId .. ") has been auto-banned", 2)
             kickPlayer(player, "You have been banned for repeated chat filter violations")
             return false
         end
@@ -714,7 +718,7 @@ function ChatFilter.OnPlayerChat(player, message)
                 return false
             end
 
-            logEvent(playerName .. " (" .. playerId .. ") has been kicked", 2)
+            logEvent(playerName .. " (" .. playerId .. ") has been auto-kicked for repeated chat filter violations", 2)
             kickPlayer(player, "Kicked for repeated chat filter violations")
             return false
         end
@@ -945,7 +949,7 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
 
                 ChatFilter.MuteDuration = duration
 
-                logEvent("MuteDuration set to " .. ChatFilter.MuteDuration)
+                logEvent("MuteDuration set to " .. formatDuration(ChatFilter.MuteDuration))
                 return
 
             end
@@ -1061,7 +1065,15 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
                 -- add to banned list with a manual ban marker and reason
                 banPlayer(targetId, resolvedName, duration, reason, true)
 
-                logEvent("Admin banned " .. resolvedName .. " (" .. targetId .. ")", 2)
+                -- reset strikes
+                strikes[targetId] = nil
+
+                -- log ban action
+                local durationText = duration and formatDuration(duration) or "permanently"
+                logEvent("Admin banned " .. resolvedName .. " (" .. targetId .. ")"
+                    .. " for " .. durationText
+                    .. " | Reason: " .. reason, 2)
+
 
                 -- kick immediately if online
                 local targetPlayer = getPlayerById(targetId)
@@ -1072,7 +1084,63 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
                 return
             end
 
-            -- unbans player by passing playerName in chat
+            -- manual offline ban by passing playerId
+            if command == "banoffline" then
+
+                if #messageSplit < 2 then
+                    logEvent("Usage: /banoffline <playerId> [duration] [reason]", 0)
+                    return
+                end
+
+                -- parse playerId
+                local targetId = tonumber(messageSplit[2])
+                if not targetId then
+                    logEvent("Invalid playerId", 0)
+                    return
+                end
+
+                -- prevent banning admins
+                if isAdmin(targetId) then
+                    logEvent("Cannot ban an admin", 0)
+                    return
+                end
+
+                -- prevent moderators from banning other moderators
+                if isModerator(targetId) and not isAdminUser then
+                    logEvent("Cannot ban another moderator", 0)
+                    return
+                end
+
+                -- checks if player is already banned
+                if isBanned(targetId) then
+                    logEvent("PlayerId " .. targetId .. " is already banned", 0)
+                    return
+                end
+
+                -- parse duration
+                local durationInput = messageSplit[3]
+                local duration = parseDuration(durationInput)
+
+                -- parse reason
+                local reasonStartIndex = duration and 4 or 3
+                local reason = table.concat(messageSplit, " ", reasonStartIndex)
+
+                if reason == "" then
+                    reason = "You have been banned"
+                end
+
+                -- add to banned list with a manual ban marker and reason
+                banPlayer(targetId, "OfflinePlayer", duration, reason, true)
+
+                local durationText = duration and formatDuration(duration) or "permanently"
+                logEvent("Admin offline-banned OfflinePlayer (" .. targetId .. ")"
+                    .. " for " .. durationText
+                    .. " | Reason: " .. reason, 2)
+
+                return
+            end
+
+            -- unbans player by passing playerID in chat
             if command == "unban" then
                 if #messageSplit < 2 then
                     logEvent("Usage: /unban <playerId>", 0)
@@ -1100,15 +1168,58 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
                 return
             end
 
-            -- command to list a;ll banned players
+            -- command to list all banned players
             if command == "listbans" then
-                -- checks for admin permissions
-                if not requireAdmin(player) then return end
 
-                logEvent("Banned Players:")
+                local entries = {}
+                local now = os.time()
+
                 for id, data in pairs(bannedPlayers) do
-                    logEvent((data.name or "Unknown") .. " (" .. id .. ")")
+
+                    -- Auto-clean expired bans
+                    if data.expires and data.expires <= now then
+                        bannedPlayers[id] = nil
+
+                    else
+                        local name = data.name or "Unknown"
+                        local reason = data.reason or "No reason"
+                        local banType = data.manual and "Manual" or "Auto"
+
+                        local remainingText
+                        local originalText
+
+                        if not data.expires then
+                            -- Permanent
+                            remainingText = "Permanent"
+                            originalText = "Permanent"
+                        else
+                            local remaining = math.max(0, data.expires - now)
+                            local originalDuration = data.expires - data.time
+
+                            remainingText = formatDuration(remaining)
+                            originalText = formatDuration(originalDuration)
+                        end
+
+                        local entry = string.format(
+                            "%s (%s) | Remaining: %s | Original: %s | Type: %s | Reason: %s",
+                            name,
+                            id,
+                            remainingText,
+                            originalText,
+                            banType,
+                            reason
+                        )
+
+                        table.insert(entries, entry)
+                    end
                 end
+
+                if #entries == 0 then
+                    logEvent("No active bans.")
+                else
+                    logEvent(table.concat(entries, " || "))
+                end
+
                 return
             end
 
@@ -1182,7 +1293,7 @@ EventManager.Listen("ServerPlayer:SendMessage", function(player, message)
 
     end
 
-    -- if not an admin command by a member of the admin list, filter message normally
+    -- if not an admin, moderator, or player command, filter message normally
 
     local allowed = ChatFilter.OnPlayerChat(player, message)
     if allowed == false then
@@ -1197,11 +1308,17 @@ EventManager.Listen("ServerPlayer:Joined", function(player)
     -- auto-kicks player on join if they are in the banned list
     if isBanned(player.playerId) then
         local ban = bannedPlayers[player.playerId]
+
+        -- update stored name if placeholder from offline ban
+        if ban.name == "OfflinePlayer" then
+            ban.name = player.name
+        end
+
         local msg = ban.reason or "You are banned from this server"
         -- Delay kick slightly to ensure player is fully initialized
         SetTimeout(function()
             if player then
-                print("Kicking player")
+                print("Kicking banned player " .. player.name .. " (" .. player.playerId .. ")")
                 player:Kick(msg)
             end
         end, 5)
