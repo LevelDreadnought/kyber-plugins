@@ -7,8 +7,9 @@ Designed to catch common word-filter bypasses, track player strikes, and automat
 
 - [Features](#features)
 - [Installation](#installation)
+- [Discord Integration](#optional-discord-webhook-relay-docker-image)
 - [Plugin Structure](#plugin-file-structure)
-- [Admin & Moderator Configuration](#admin-configuration)
+- [Admin & Moderator Configuration](#admin--moderator-configuration)
 - [In-Game Moderation Commands](#in-game-moderation-commands-via-game-chat)
 - [Admin Commands](#admin-commands-configuration-changes)
 - [Configuration & Defaults](#configuration-options-in-lua)
@@ -103,6 +104,26 @@ Optional:
 - Set environment variables for Docker deployments (overwrites default variables)
 - Modify defaults in `__init__.lua`
 - Adjust thresholds and toggle features in-game via admin commands
+
+## Optional: Discord Webhook Relay (Docker Image)
+
+This plugin can optionally integrate with Discord using a companion
+Go-based Docker image (sidecar) that monitors the Kyber server log file and
+forwards moderation events to Discord via webhook.
+
+The relay:
+
+* Watches the Kyber log directory in real time
+* Parses structured `logEvent()` output
+* Sends moderation events to Discord via webhook
+* Runs independently of the Kyber server container
+* Requires no modification to the ChatFilter plugin
+
+Repository:
+https://github.com/LevelDreadnought/kyber-chatfilter-discord
+
+This integration is completely optional and not required for core
+ChatFilter functionality.
 
 ## Plugin File Structure
 ```
