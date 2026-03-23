@@ -273,7 +273,6 @@ Examples:
 
 ```
 /unmute <playerName>
-
 ```
 Example:
 
@@ -389,6 +388,7 @@ DarthVader (10001234) | Remaining: 14m 22s | Original: 30m | Type: Manual | Reas
 * Shows online moderators by name and ID
 * Offline moderators shown by ID only
 
+---
 
 ### Moderation Utility Commands
 
@@ -508,7 +508,7 @@ Examples:
 Chat Message
    ↓
 Check if command
-   ├─ Yes → permission check → execute command
+   ├─ Yes → permissions check → execute command
    └─ No  ↓
 Normalization & Pattern Matching
    ↓
