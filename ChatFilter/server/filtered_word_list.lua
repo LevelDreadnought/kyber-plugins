@@ -331,6 +331,7 @@ WordList = {
   "niggerhead",
   "niggerhole",
   "niggers",
+  "niggga",
   "niggle",
   "niggled",
   "niggles",

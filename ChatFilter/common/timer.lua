@@ -1,6 +1,12 @@
+-- Timer utility for use in kyber server plugins
+
+-- Credits:
+--  Original code: Armchair Developers
+--  Changes and additions: LevelDreadnought
+
 TimerService = {
     timers = {},
-    
+
     update = function(self, deltaSecs)
         for i = #self.timers, 1, -1 do
             local timer = self.timers[i]
