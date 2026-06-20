@@ -88,7 +88,7 @@ Admins and moderators are matched strictly by **playerId**, not by name.
 * Log prefixes (`Detection:`, `Action:`, `Error:`) used by the optional Discord relay to distinguish event types
 * `/listbans` outputs a single-line structured format
 
-### HTTP API & Remote Control
+### HTTP API and Remote Control
 
 * Built-in HTTP server (default port `8081`) for remote administration and state persistence across server restarts
     * Endpoints:
